@@ -34,13 +34,21 @@
 
 // The PCG code also does some processing on the CPU, and so we need the
 // headers for grid, vec3, etc.
-#define SOURCE_FILE "generic/vec3.h"
-#include "generic/cc_types.h"
-#undef SOURCE_FILE
-
-#define SOURCE_FILE "third_party/grid.h"
-#include "generic/cc_types.h"
-#undef SOURCE_FILE
+#define torch_(NAME) TH_CONCAT_3(torch_, Real, NAME)
+#define torch_Tensor TH_CONCAT_STRING_3(torch., Real, Tensor)
+#define tfluids_(NAME) TH_CONCAT_3(tfluids_, Real, NAME)
+#define real float
+#define accreal double
+#define Real Float
+#define THInf FLT_MAX
+#define TH_REAL_IS_FLOAT
+#include "generic/vec3.h"
+#include "third_party/grid.h"
+#undef accreal
+#undef real
+#undef Real
+#undef THInf
+#undef TH_REAL_IS_FLOAT
 
 #include "generic/calc_line_trace.cu"
 
@@ -1747,26 +1755,11 @@ static int tfluids_CudaMain_solveLinearSystemPCG(lua_State* L) {
         }
         nalpha = -alpha;
         // According to Shewchuck we should re-init r every 50 iterations.
-        if (iter % 50 == 0) {
-          if (verbose) {
-            std::cout << "PCG: Reinitializing residual vector" << std::endl;
-          }
-          // y_gpu = A * x_gpu
-          CHECK_CUSPARSE(cusparseScsrmv(
-              cusparse_handle, CUSPARSE_OPERATION_NON_TRANSPOSE, numel, numel,
-              nz, &one, descr, DEV_PTR(val_gpu), DEV_INT_PTR(row_gpu),
-              DEV_INT_PTR(col_gpu), DEV_PTR(x_gpu), &zero, DEV_PTR(y_gpu)));
-          THCudaTensor_copy(state, r_gpu, rhs_gpu);
-          const float neg_one = -1.0f;
-          // r_gpu = rhs_gpu - A * x_gpu
-          CHECK_CUBLAS(cublasSaxpy(cublas_handle, numel, &neg_one,
-                                   DEV_PTR(y_gpu), 1, DEV_PTR(r_gpu), 1));
-        } else {
+        // EDIT(tompson): It doesn't seem to help (removed but in git history).
 
-          // r_k = r_{k - 1} - alpha_k * A * p_k = r_{k - 1} - alpha_k * omega_k
-          CHECK_CUBLAS(cublasSaxpy(cublas_handle, numel, &nalpha,
-                                   DEV_PTR(omega_gpu), 1, DEV_PTR(r_gpu), 1));
-        }
+        // r_k = r_{k - 1} - alpha_k * A * p_k = r_{k - 1} - alpha_k * omega_k
+        CHECK_CUBLAS(cublasSaxpy(cublas_handle, numel, &nalpha,
+                                 DEV_PTR(omega_gpu), 1, DEV_PTR(r_gpu), 1));
   
         r_norm_sq0 = r_norm_sq1;  // Update previous residual.
   
@@ -2003,6 +1996,7 @@ static const struct luaL_Reg tfluids_CudaMain__ [] = {
   {"setWallBcsForward", tfluids_CudaMain_setWallBcsForward},
   {"vorticityConfinement", tfluids_CudaMain_vorticityConfinement},
   {"addBuoyancy", tfluids_CudaMain_addBuoyancy},
+  {"addGravity", tfluids_CudaMain_addGravity},
   {"velocityUpdateForward", tfluids_CudaMain_velocityUpdateForward},
   {"velocityUpdateBackward", tfluids_CudaMain_velocityUpdateBackward},
   {"velocityDivergenceForward", tfluids_CudaMain_velocityDivergenceForward},

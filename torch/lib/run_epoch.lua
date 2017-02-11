@@ -127,6 +127,33 @@ function torch.runEpoch(input)
       processedSamples[batchSet[i]] = true
     end
 
+    local oldBuoyancyScale = mconf.buoyancyScale
+    if (torch.uniform() < mconf.trainBuoyancyProb) then
+      -- Add buoyancy to this batch.
+      mconf.buoyancyScale = mconf.trainBuoyancyScale
+    end
+
+    local oldGravityScale = mconf.gravityScale
+    if (torch.uniform() < mconf.trainGravityProb) then
+      -- Add gravity to this batch.
+      mconf.gravityScale = mconf.trainGravityScale  
+    end
+
+    local oldVorticityConfinementAmp = mconf.vorticityConfinementAmp
+    if (torch.uniform() < mconf.trainVorticityConfinementProb) then
+      -- Add vorticity confinement to this batch.
+      mconf.vorticityConfinementAmp = mconf.trainVorticityConfinementAmp
+    end
+
+    oldGravity = mconf.gravity
+    if mconf.buoyancyScale > 0 or mconf.gravityScale > 0 then
+      mconf.gravity = torch.CudaTensor(3):fill(0)
+      -- Pick a random cardinal direction.
+      mconf.gravity[torch.random(1, 3)] = (torch.random(0, 1) * 2 - 1)
+      -- Use standard gravity direction.
+      -- mconf.gravity[2] = 1
+    end
+
     -- Sync the batch to the GPU.
     torch.syncBatchToGPU(batch.data, batchGPU)
 
@@ -192,8 +219,9 @@ function torch.runEpoch(input)
         -- Pick a random timescale.
         if mconf.timeScaleSigma > 0 then
           -- note, randn() returns normal distribution with mean 0 and var 1.
-          local scale = 1 + math.abs(torch.randn(1)[1] *
-                                     mconf.timeScaleSigma)
+          -- the mean of abs(randn) ~= 0.7972, hence the 0.2028 value below.
+          local scale = 0.2028 + math.abs(torch.randn(1)[1] *
+                                          mconf.timeScaleSigma)
           mconf.dt = baseDt * scale
         end
 
@@ -261,6 +289,12 @@ function torch.runEpoch(input)
       -- Just execute the callback to FPROP.
       feval(parameters)
     end
+
+    -- Put the simulation parameters back.
+    mconf.buoyancyScale = oldBuoyancyScale
+    mconf.gravityScale = oldGravityScale
+    mconf.vorticityConfinementAmp = oldVorticityConfinementAmp
+    mconf.gravity = oldGravity
 
     nbatches = nbatches + 1
   until parallel:empty()

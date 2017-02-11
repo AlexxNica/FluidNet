@@ -430,7 +430,7 @@ local function vorticityConfinement(U, flags, strength)
 end
 rawset(tfluids, 'vorticityConfinement', vorticityConfinement)
 
--- Add buoyancy force. Note: Unlike vorticityConfinement, addBuoyance has a dt
+-- Add buoyancy force. Note: Unlike vorticityConfinement, addBuoyancy has a dt
 -- term.
 -- Note: Buoyancy is added IN-PLACE.
 --
@@ -469,6 +469,42 @@ local function addBuoyancy(U, flags, density, gravity, dt)
   U.tfluids.addBuoyancy(U, flags, density, gravity, strength, dt, is3D)
 end
 rawset(tfluids, 'addBuoyancy', addBuoyancy)
+
+-- Add gravity force. Note: Unlike vorticityConfinement, addGravity has a dt
+-- term.
+-- Note: gravity is added IN-PLACE.
+--
+-- @param U - vel field (size(2) can be 2 or 3, indicating 2D / 3D)
+-- @param flags - input occupancy grid
+-- @param gravity - 3D vector indicating direction of gravity.
+-- @param dt - scalar timestep.
+local function addGravity(U, flags, gravity, dt)
+  -- Check arguments here (it's easier from lua).
+  assert(U:dim() == 5 and flags:dim() == 5, 'Dimension mismatch')
+  assert(flags:size(2) == 1, 'flags is not scalar')
+  local bsz = flags:size(1)
+  local d = flags:size(3)
+  local h = flags:size(4)
+  local w = flags:size(5)
+
+  local is3D = U:size(2) == 3
+  if not is3D then
+    assert(d == 1, '2D velocity field but zdepth > 1')
+    assert(U:size(2) == 2, '2D velocity field must have only 2 channels')
+  end
+  assert((U:size(1) == bsz and U:size(3) == d and U:size(4) == h and
+          U:size(5) == w), 'Size mismatch')
+
+  assert(U:isContiguous() and flags:isContiguous(), 'Input is not contiguous')
+  assert(torch.isTensor(gravity) and gravity:dim() == 1 and
+         gravity:size(1) == 3, 'gravity must be a 3D vector (even in 2D).')
+  assert(torch.type(dt) == 'number', 'time step must be a number')
+
+  local force = getTempStorage(U:type(), {{3}})[1]  -- Used in cuda version.
+
+  U.tfluids.addGravity(U, flags, gravity, dt, is3D, force)
+end   
+rawset(tfluids, 'addGravity', addGravity)
 
 -- flipY will render the field upside down (required to get alignment with
 -- grid = 0 on the bottom of the OpenGL context).

@@ -844,6 +844,7 @@ static const struct luaL_Reg tfluids_(Main__) [] = {
   {"setWallBcsForward", tfluids_(Main_setWallBcsForward)},
   {"vorticityConfinement", tfluids_(Main_vorticityConfinement)},
   {"addBuoyancy", tfluids_(Main_addBuoyancy)},
+  {"addGravity", tfluids_(Main_addGravity)},
   {"drawVelocityField", tfluids_(Main_drawVelocityField)},
   {"loadTensorTexture", tfluids_(Main_loadTensorTexture)},
   {"velocityUpdateForward", tfluids_(Main_velocityUpdateForward)},

@@ -55,6 +55,16 @@ if conf.loadModel then
   end
   print('Loading model from ' .. mpath)
   mconf, model = torch.loadModel(mpath)
+
+  if conf.resumeTraining then
+    mconf.optimState.bestPerf = math.huge  -- We might change loss params.
+    -- We might also want to change loss function parameters, so copy over
+    -- some mconf parameters that DO NOT pertain to the model architecture
+    -- (which is fixed if we're loading a model).
+    print('Overwriting some conf.newModel params into loaded mconf:')
+    torch.copyTrainingMconfParams(mconf, conf.newModel)
+  end
+
   conf.newModel = nil
 else
   assert(not conf.resumeTraining,
@@ -226,36 +236,27 @@ end
 -- ********************* Visualize some inputs and outputs *********************
 -- Create a random batch, FPROP using it and visualize the results
 --[[
-local samplenum = math.max(tr:nsamples() / 2,1)
-local err, pred, batchCPU, batchGPU =
-    torch.FPROPImage(conf, mconf, tr, model, criterion, {samplenum})
+samplenum = math.ceil(_te:nsamples() / 2)
+err, pred, batchCPU, batchGPU =
+    torch.FPROPImage(_conf, _mconf, _te, _model, _criterion, {samplenum})
 --]]
 
 -- *************************** CALCULATE STATISTICS ****************************
 -- First do a fast run-through of the test-set to measure test-set crit perf.
+--[[
 local tePerf = torch.runEpoch(
     {data = te, conf = conf, mconf = mconf, model = model,
      criterion = criterion, parameters = parameters, epochType = 'test'})
 torch.save(conf.modelDirname .. '_tePerf.bin', tePerf)
-
--- Plot a histogram of the batch errors (sometimes it is helpful to debug bad
--- samples in the test-set, i.e. if Manta goes unstable).
---[[
-local errs = {}
-for _, indErrPair in pairs(tePerf.batchErr) do
-  errs[#errs + 1] = indErrPair.err
-end
-gnuplot.hist(torch.FloatTensor(errs))
-gnuplot.plot({'errs', torch.FloatTensor(torch.range(1, #errs)),
-              torch.FloatTensor(errs), '-'})
 --]]
 
 -- Now do a more detailed analysis of the test and training sets (including
 -- long term divergence prediction). This is quite slow.
-local function CalcAndDumpStats(data, dataStr)
-  local nSteps = 64  -- Use 128 for paper.
+function tfluids.CalcAndDumpStats(data, dataStr)
+  local nSteps = 128  -- Use 128 for paper.
   local stats = torch.calcStats(
-      {data = data, conf = conf, mconf = mconf, model = model, nSteps = nSteps})
+      {data = data, conf = _conf, mconf = _mconf, model = _model,
+       nSteps = nSteps})
   local fn = conf.modelDirname .. '_' .. dataStr .. 'Stats.bin'
   torch.save(fn, stats)
   print('Saved ' .. fn)
@@ -267,7 +268,7 @@ local function CalcAndDumpStats(data, dataStr)
     print('Saved ' .. fn)
   end
 end
-CalcAndDumpStats(te, 'te')
-CalcAndDumpStats(tr, 'tr')
+tfluids.CalcAndDumpStats(_te, 'te')
+-- tfluids.CalcAndDumpStats(_tr, 'tr')
 
 print('ALL DONE!')

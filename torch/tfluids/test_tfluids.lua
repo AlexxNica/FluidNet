@@ -36,8 +36,8 @@ local loosePrecision = 1e-4
 local mytester = torch.Tester()
 local test = torch.TestSuite()
 local times = {}
-local profileTimeSec = 1  -- Probably too small for any real profiling...
-local profileResolution = 128
+local profileTimeSec = 0.5  -- Probably too small for any real profiling...
+local profileResolution = 64
 local jac = nn.Jacobian
 
 local function tileToResolution(x, res)
@@ -441,7 +441,7 @@ function test.setWallBcs()
     -- We call setWallBcs three times in the Manta training code so we should
     -- test it in all cases.
     testSetWallBcs(dim, 'advect.bin', 'setWallBcs1.bin')
-    testSetWallBcs(dim, 'vorticityConfinement.bin', 'setWallBcs2.bin')
+    testSetWallBcs(dim, 'gravity.bin', 'setWallBcs2.bin')
     testSetWallBcs(dim, 'solvePressure.bin', 'setWallBcs3.bin')
   end
 end
@@ -449,7 +449,7 @@ end
 function test.velocityDivergence()
   for dim = 2, 3 do
     -- Load the input Manta data.
-    local fn = dim .. 'd_vorticityConfinement.bin'
+    local fn = dim .. 'd_gravity.bin'
     local _, U, flags, _, is3D = loadMantaBatch(fn)
     assertNotAllEqual(U)
     assertNotAllEqual(flags)
@@ -502,7 +502,7 @@ end
 function test.velocityUpdate()
   for dim = 2, 3 do
     -- Load the input Manta data.
-    local fn = dim .. 'd_vorticityConfinement.bin'
+    local fn = dim .. 'd_gravity.bin'
     local _, U, flags, _, is3D = loadMantaBatch(fn)
     assertNotAllEqual(U)
     assertNotAllEqual(flags)
@@ -591,6 +591,16 @@ function test.vorticityConfinement()
   end
 end
 
+local function getGravity(dim, flags)
+  local gStrength = tfluids.getDx(flags) / 4
+  local gravity = torch.FloatTensor({1, 2, 3})
+  if dim == 2 then
+    gravity[3] = 0
+  end
+  gravity:div(gravity:norm()):mul(gStrength)
+  return gravity
+end
+
 function test.addBuoyancy()
   for dim = 2, 3 do
     -- Load the input Manta data.
@@ -613,12 +623,7 @@ function test.addBuoyancy()
 
     -- Perform our own velocity update calculation.
     local UOurs = U:clone()  -- This is the divergent U.
-    local gStrength = tfluids.getDx(flags) / 4
-    local gravity = torch.FloatTensor({1, 2, 3})
-    if dim == 2 then
-      gravity[3] = 0
-    end
-    gravity:div(gravity:norm()):mul(gStrength)
+    local gravity = getGravity(dim, flags)
     local dt = 0.1
     tfluids.addBuoyancy(UOurs, flags:clone(), density:clone(), gravity, dt)
     local err = UManta - UOurs
@@ -629,6 +634,41 @@ function test.addBuoyancy()
     profileAndTestCuda(tfluids.addBuoyancy,
                        'addBuoyancy_' .. dim .. 'd',  
                        {UOurs, flags, density, gravity, dt})
+  end
+end
+
+function test.addGravity()
+  for dim = 2, 3 do
+    -- Load the input Manta data.
+    local fn = dim .. 'd_vorticityConfinement.bin'
+    local _, U, flags, _, is3D = loadMantaBatch(fn)
+    assertNotAllEqual(U)
+    assertNotAllEqual(flags)
+
+    assert(is3D == (dim == 3))
+    -- Now load the output Manta data.
+    fn = dim .. 'd_gravity.bin'
+    local _, UManta, flagsManta, _, is3D = loadMantaBatch(fn)
+    assert(is3D == (dim == 3))
+    assert(torch.all(torch.eq(flags, flagsManta)), 'flags changed!')
+
+    -- Make sure this isn't a trivial velocity update (i.e. that velocities
+    -- actually changed). 
+    assert((U - UManta):abs():max() > 1e-5, 'No velocities changed in Manta!')
+
+    -- Perform our own gravity calculation.
+    local UOurs = U:clone()
+    local gravity = getGravity(dim, flags)
+    local dt = 0.1
+    tfluids.addGravity(UOurs, flags:clone(), gravity, dt)
+    local err = UManta - UOurs
+    mytester:assertlt(err:abs():max(), precision,
+                      ('Error: tfluids.addGravity dim ' .. dim))
+
+    -- Now test and profile the CUDA version.
+    profileAndTestCuda(tfluids.addGravity,
+                       'addGravity_' .. dim .. 'd',
+                       {UOurs, flags, gravity, dt})
   end
 end
 

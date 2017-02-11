@@ -26,7 +26,7 @@ function tfluids.getPUFlagsDensityReference(batchData)
   local p = batchData.pDiv
   local U = batchData.UDiv
   local flags = batchData.flags
-  local density = batchData.density  -- Optional field.
+  local density = batchData.density or batchData.densityDiv  -- Optional field.
   return p, U, flags, density
 end
 
@@ -201,10 +201,22 @@ function tfluids.simulate(conf, mconf, batch, model, outputDiv)
   -- Set the manual boundary conditions.
   setConstVals(batch, p, U, flags, density)
 
-  -- Add external forces (buoyancy and gravity).
+  local function getGravity(mconf)
+    local gravity
+    if mconf.gravity == nil then
+      gravity = torch.Tensor():typeAs(U):resize(3):fill(0)
+      gravity[2] = 1  -- Default gravity direction.
+    else
+      gravity = mconf.gravity:clone()
+    end
+    return gravity
+  end
+
+  -- Add external forces: buoyancy.
   if density ~= nil and mconf.buoyancyScale > 0 then
-    local gravity = U:new():resize(3)
-    gravity[2] = (-tfluids.getDx(flags) / 4) * mconf.buoyancyScale
+    local gravity = getGravity(mconf) 
+    gravity:mul(-(tfluids.getDx(flags) / 4) * mconf.buoyancyScale)
+
     if type(density) == 'table' then
       -- Just use the first channel (TODO(tompson): average the channels)
       tfluids.addBuoyancy(U, flags, density[1], gravity, mconf.dt)
@@ -213,12 +225,17 @@ function tfluids.simulate(conf, mconf, batch, model, outputDiv)
     end
   end
 
-  -- TODO(tompson): Add support for gravity.
+  -- Add external forces: gravity.
+  if mconf.gravityScale > 0 then
+    local gravity = getGravity(mconf)
+    gravity:mul((-tfluids.getDx(flags) / 4) * mconf.gravityScale)
+    tfluids.addGravity(U, flags, gravity, mconf.dt)
+  end
 
-  -- Add vorticity confinement.
+  -- Add external forces: vorticity confinement.
   if mconf.vorticityConfinementAmp > 0 then
     local amp = tfluids.getDx(flags) * mconf.vorticityConfinementAmp
-    tfluids.vorticityConfinement(U, flags, mconf.vorticityConfinementAmp)
+    tfluids.vorticityConfinement(U, flags, amp)
   end
 
   if outputDiv then
@@ -253,13 +270,13 @@ function tfluids.simulate(conf, mconf, batch, model, outputDiv)
     local residual
     if mconf.simMethod == 'pcg' then
       local tol = 1e-4
-      local maxIter = 100
+      local maxIter = mconf.maxIter or 100
       local precondType = 'ic0'  -- options: 'ic0', 'none', 'ilu0'
       residual = tfluids.solveLinearSystemPCG(
           p, flags, batch.div, mconf.is3D, tol, maxIter, precondType)
     elseif mconf.simMethod == 'jacobi' then
       local pTol = 0  -- Essentially, this means a fixed number of iter.
-      local maxIter = 100  -- It has VERY slow convergence. Run for long time.
+      local maxIter = mconf.maxIter or 100
       residual = tfluids.solveLinearSystemJacobi(
           p, flags, batch.div, mconf.is3D, pTol, maxIter)
     else

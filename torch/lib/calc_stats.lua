@@ -12,8 +12,12 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- This is really just a 'catch all' function for a bunch of hacky data and
+-- analysis (some of which was used for the paper).
+
 local sys = require('sys')
 local tfluids = require('tfluids')
+local image = torch.loadPackageSafe('image')
 
 -- Calculate divergence stats. 
 function torch.calcStats(input)
@@ -25,6 +29,87 @@ function torch.calcStats(input)
   local nSteps = input.nSteps or 128
 
   torch.setDropoutTrain(model, false)
+
+  local batchCPU = data:AllocateBatchMemory(1)
+  local batchGPU = torch.deepClone(batchCPU, 'torch.CudaTensor')
+  local divNet = tfluids.VelocityDivergence():cuda()
+
+  -- The first thing we should do is evaluate a single sample that is a known
+  -- failure case (lots of buoyancy).
+  local isample = math.floor(data:nsamples() / 5)
+  data:CreateBatch(batchCPU, torch.IntTensor({isample}), 1, conf.dataDir)
+  torch.syncBatchToGPU(batchCPU, batchGPU)
+  local p, U, flags = tfluids.getPUFlagsDensityReference(batchGPU)
+  local density = p:clone():fill(1)  -- So that buoyancy adds a gradient.
+
+  -- Now, do a step of PCG to remove any divergence.
+  local div = p:clone()
+  tfluids.velocityDivergenceForward(U, flags, div)
+  local residual = tfluids.solveLinearSystemPCG(
+      p, flags, div, mconf.is3D, 1e-6, 1000, 'ic0', false)
+  tfluids.velocityUpdateForward(U, flags, p)
+
+  tfluids.velocityDivergenceForward(U, flags, div)
+  assert(div[1]:norm() < 1e-4, 'U field is not starting div free')
+
+  -- Now add divergence with and without buoyancy.
+  for withBuoyancy = 0, 1 do
+    local curU = U:clone()
+    local dt = 0.1
+    tfluids.advectVel(dt, curU, flags, 'eulerOurs')
+    if withBuoyancy == 1 then
+      local gravity = torch.Tensor():typeAs(U):resize(3):fill(0)
+      gravity[2] = -tfluids.getDx(flags)
+      tfluids.addBuoyancy(curU, flags, density, gravity, dt)
+    end
+
+    tfluids.setWallBcsForward(curU, flags)
+
+    -- Now use PCG again to get a ground truth output.
+    tfluids.velocityDivergenceForward(curU, flags, div)
+    local pPCG = p:clone()
+    local residual = tfluids.solveLinearSystemPCG(
+        pPCG, flags, div, mconf.is3D, 1e-6, 1000, 'ic0', false)
+    local UPCG = curU:clone()
+    tfluids.velocityUpdateForward(UPCG, flags, pPCG)
+    tfluids.setWallBcsForward(UPCG, flags)
+
+    -- Now use the Convnet to get the predicted output.
+    local modelOutput = model:forward({p, curU, flags})
+    local pConvNet, UConvNet = torch.parseModelOutput(modelOutput)
+    -- We're free to set geometry cells to whatever we want.
+    -- and lets subtract off the global mean (of fluid cells).
+    local occupancy = p:clone()
+    local invOccupancy = occupancy:clone():mul(-1):add(1)
+    tfluids.flagsToOccupancy(flags, occupancy)
+    pConvNet:cmul(invOccupancy)
+    pPCG:cmul(invOccupancy)
+    pConvNet:add(-(pConvNet:sum() / invOccupancy:sum()))
+    pPCG:add(-(pPCG:sum() / invOccupancy:sum()))
+    pConvNet:cmul(invOccupancy)
+    pPCG:cmul(invOccupancy)
+
+    -- Get the divergences.
+    tfluids.velocityDivergenceForward(UPCG, flags, div)
+    print('withBuoyancy = ' .. withBuoyancy)
+    print('PCG norm(div(U)) = ' .. div[1]:norm())
+    tfluids.velocityDivergenceForward(UConvNet, flags, div)
+    print('PCG norm(div(U)) = ' .. div[1]:norm())
+
+    -- Plot the outputs.
+    if image ~= nil then
+      local i = math.ceil(pPCG:size(3) / 2)
+      image.display{image = pPCG[1][1][i], zoom = 10, legend = 'pPCG ' ..
+                    'withBuoyancy  ' .. withBuoyancy}
+      image.display{image = pConvNet[1][1][i], zoom = 10, legend = 'pConvNet' ..
+                    'withBuoyancy  ' .. withBuoyancy}
+    end
+  end
+
+  -- Now lets go through the dataset and get the statistics of output
+  -- divergence, etc.
+  local batchCPU = data:AllocateBatchMemory(conf.batchSize)
+  local batchGPU = torch.deepClone(batchCPU, 'torch.CudaTensor')
   local dataInds
   if conf.maxSamplesPerEpoch < math.huge then
     dataInds = torch.range(1,
@@ -32,12 +117,6 @@ function torch.calcStats(input)
   else
     dataInds = torch.range(1, data:nsamples())
   end
-
-  local batchCPU = data:AllocateBatchMemory(conf.batchSize)
-  local batchGPU = torch.deepClone(batchCPU, 'torch.CudaTensor')
-
-  local divNet = tfluids.VelocityDivergence():cuda()
-
   -- For each sample we'll save a histogram of 10,000 bins of varying scales.
   local nHistBins = 10000
   local histData = {
@@ -109,7 +188,7 @@ function torch.calcStats(input)
         data = torch.norm(data, 1, 2)  -- Record histogram of L2 mag.
       end
       data = data:view(data:numel())  -- Vectorize to 1D.
-      local hist = torch.histc(data:float(), nHistBins, min[1], max[1])
+      local hist = torch.histc(data:float(), nHistBins, min[1], max[1]):double()
       return hist
     end
     for i = 1, #imgList do

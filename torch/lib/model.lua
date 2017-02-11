@@ -468,3 +468,18 @@ function torch.FPROPImage(conf, mconf, data, model, criterion, imgList)
   return err, pred, batchCPU, batchGPU
 end
 
+function torch.copyTrainingMconfParams(mconfDst, mconfSrc)
+  local vars = {'gradNormThreshold', 'lossPLambda', 'lossDivLambda',
+                'longTermDivLambda', 'longTermDivProbability', 'dt',
+                'trainBuoyancyProb', 'trainBuoyancyScale',
+                'lossFuncBorderWeight', 'lossFuncBorderWidth',
+                'gravityScale', 'trainGravityScale', 'trainGravityProb',
+                'trainVorticityConfinementAmp', 'trainVorticityConfinementProb'}
+  for _, name in pairs(vars) do
+    mconfDst[name] = mconfSrc[name]
+    print('  copying mconf ' .. name)
+  end
+
+  mconfDst.optimState.weightDecay = mconfSrc.optimState.weightDecay
+  print('  copying mconf optimState.weightDecay')
+end

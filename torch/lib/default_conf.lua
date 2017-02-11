@@ -61,6 +61,8 @@ function torch.defaultConf()
       -- the threshold then we will re-scale it to the threshold value.
       -- This is vitally important in removing outliers.
       gradNormThreshold = 1,
+      -- gravityScale: Gravity force scale. Set to 0 to disable.
+      gravityScale = 0,
       -- inputChannels: Specify which inputs will be sent to the projection
       -- network.
       inputChannels = {
@@ -70,14 +72,14 @@ function torch.defaultConf()
         UDiv = false,
       },
       lossFunc = 'fluid',  -- Only fluid is supported for now.
-      lossFuncBorderWeight = 1,  -- 1 == disabled.
+      lossFuncBorderWeight = 4,  -- 1 == disabled.
       lossFuncBorderWidth = 3,  -- We linearly ramp from 1 to weight.
       lossPLambda = 0,
       lossULambda = 0,
       lossDivLambda = 1,
       -- longTermDivLambda: Set to 0 to disable (or set longTermDivNumSteps to
       -- nil).
-      longTermDivLambda = 0.25,
+      longTermDivLambda = 1.0,
       -- longTermDivNumSteps: We want to measure what the divergence is after
       -- a set number of steps for each training and test sample. Set table
       -- to nil to disable, (or set longTermDivLambda to 0).
@@ -85,7 +87,7 @@ function torch.defaultConf()
       -- longTermDivProbability is the probability that longTermDivNumSteps[1] 
       -- will be taken, otherwise longTermDivNumSteps[2] will be taken with
       -- probability of 1 - longTermDivProbability.
-      longTermDivProbability = 1.0,
+      longTermDivProbability = 0.9,
       -- optimizationMethod: available options: 'sgd', 'adam', 'adagrad',
       -- 'lbfgs' (requires full batch not mini batches)
       modelType = 'default',  -- Choices are 'default', 'yang', 'tog'
@@ -115,6 +117,18 @@ function torch.defaultConf()
       -- 'convnet' to simluate using our method.
       simMethod = 'convnet',  -- At inference time (during simulate) we ca
       timeScaleSigma = 1,  -- Amplitude of time scale perturb during training.
+      -- trainBuoyancyProb - We will add buoyancy to the training with
+      -- this probability Note that this is ONLY applied to the future frame
+      -- divergence term.
+      trainBuoyancyProb = 0,
+      -- trainBuoyancyScale -- This is the buoyancy scale to use when adding
+      -- buoyancy. We will apply the scale in a random cardinal direction
+      -- (i.e. up, down, left, right, forward, backward).
+      trainBuoyancyScale = 2,
+      trainGravityProb = 0,
+      trainGravityScale = 2,
+      trainVorticityConfinementProb = 0,
+      trainVorticityConfinementAmp = 2,
       -- vorticityConfinementAmp: The vorticity confinement scale value.
       -- Set to 0 to disable vorticity confinement.
       vorticityConfinementAmp = 0.0,
